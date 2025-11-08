@@ -176,17 +176,22 @@ EOF
 arr1=(`cat $conf`)
 for cell in ${arr1[@]}
 do
-    arr2=(`echo $cell|tr ":" " "|tr ">" " "`)
-    # 过滤非法的行
-    [ "${arr2[2]}" != "" -a "${arr2[3]}" = "" ]&& testVars ${arr2[0]}  ${arr2[1]} ${arr2[2]}&&{
-        echo "转发规则： ${arr2[0]} => ${arr2[1]}:${arr2[2]}"
-        dnatIfNeed ${arr2[0]} ${arr2[1]} ${arr2[2]}
-    }
-    # 支持端口段格式：localport1:localport2>remotehost:remoteport1:remoteport2
-    [ "${arr2[3]}" != "" -a "${arr2[4]}" = "" ]&& testVars "${arr2[0]}:${arr2[1]}"  ${arr2[2]} "${arr2[3]}:${arr2[4]}"&&{
-        echo "转发规则（端口段）： ${arr2[0]}:${arr2[1]} => ${arr2[2]}:${arr2[3]}:${arr2[4]}"
-        dnatIfNeed "${arr2[0]}:${arr2[1]}" ${arr2[2]} "${arr2[3]}:${arr2[4]}"
-    }
+    # 先用>分割出左右两部分
+    localpart=$(echo $cell | cut -d'>' -f1)
+    remotepart=$(echo $cell | cut -d'>' -f2)
+    
+    # 分割远程部分：域名/IP 和 端口
+    remotehost=$(echo $remotepart | rev | cut -d':' -f2- | rev)
+    remoteport=$(echo $remotepart | rev | cut -d':' -f1 | rev)
+    
+    # 检查是否有效
+    if [ "$localpart" != "" -a "$remotehost" != "" -a "$remoteport" != "" ]; then
+        # 验证格式
+        if testVars "$localpart" "$remotehost" "$remoteport"; then
+            echo "转发规则： $localpart => $remotehost:$remoteport"
+            dnatIfNeed "$localpart" "$remotehost" "$remoteport"
+        fi
+    fi
 done
 
 lastConfigTmpStr=`cat $lastConfigTmp`
@@ -313,19 +318,28 @@ testVars(){
 }
 
 lsDnat(){
-    arr1=(`cat $conf`)
-    for cell in ${arr1[@]}  
-    do
-        arr2=(`echo $cell|tr ":" " "|tr ">" " "`)
-        # 单端口格式
-        [ "${arr2[2]}" != "" -a "${arr2[3]}" = "" ]&& testVars ${arr2[0]}  ${arr2[1]} ${arr2[2]}&&{
-            echo "转发规则： ${arr2[0]}>${arr2[1]}:${arr2[2]}"
-        }
-        # 端口段格式
-        [ "${arr2[3]}" != "" -a "${arr2[4]}" = "" ]&&{
-            echo "转发规则（端口段）： ${arr2[0]}:${arr2[1]}>${arr2[2]}:${arr2[3]}:${arr2[4]}"
-        }
-    done
+    if [ ! -f "$conf" ] || [ ! -s "$conf" ]; then
+        echo "暂无转发规则"
+        return
+    fi
+    
+    while IFS= read -r cell; do
+        # 跳过空行
+        [ -z "$cell" ] && continue
+        
+        # 先用>分割出左右两部分
+        localpart=$(echo $cell | cut -d'>' -f1)
+        remotepart=$(echo $cell | cut -d'>' -f2)
+        
+        # 分割远程部分：域名/IP 和 端口
+        remotehost=$(echo $remotepart | rev | cut -d':' -f2- | rev)
+        remoteport=$(echo $remotepart | rev | cut -d':' -f1 | rev)
+        
+        # 检查是否有效
+        if [ "$localpart" != "" -a "$remotehost" != "" -a "$remoteport" != "" ]; then
+            echo "转发规则： $localpart => $remotehost:$remoteport"
+        fi
+    done < "$conf"
 }
 
 echo  -e "${red}你要做什么呢（请输入数字）？Ctrl+C 退出本脚本${black}"
