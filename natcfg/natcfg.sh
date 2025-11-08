@@ -108,25 +108,41 @@ dnat(){
         local remote=$2
         local remoteport=$3
 
-        # 检查是否为端口段映射到单端口的情况
-        local local_is_range=$(echo "$localport" | grep -c ":")
-        local remote_is_range=$(echo "$remoteport" | grep -c ":")
+        # 检查是否包含端口段
+        if echo "$localport" | grep -q ":"; then
+            local local_is_range=1
+        else
+            local local_is_range=0
+        fi
+        
+        if echo "$remoteport" | grep -q ":"; then
+            local remote_is_range=1
+        else
+            local remote_is_range=0
+        fi
         
         if [ $local_is_range -eq 1 ] && [ $remote_is_range -eq 0 ]; then
-            # 端口段映射到单端口：需要逐个端口创建规则
-            local start_port=$(echo "$localport" | cut -d: -f1)
-            local end_port=$(echo "$localport" | cut -d: -f2)
-            
-            for ((port=$start_port; port<=$end_port; port++)); do
-                cat >> $lastConfigTmp <<EOF
-iptables -t nat -A PREROUTING -p tcp --dport $port -j DNAT --to-destination $remote:$remoteport
-iptables -t nat -A PREROUTING -p udp --dport $port -j DNAT --to-destination $remote:$remoteport
+            # 本地端口段 -> 远程单端口（所有端口都转发到同一个远程端口）
+            # 需要使用 multiport 模块
+            cat >> $lastConfigTmp <<EOF
+iptables -t nat -A PREROUTING -p tcp -m multiport --dports $localport -j DNAT --to-destination $remote:$remoteport
+iptables -t nat -A PREROUTING -p udp -m multiport --dports $localport -j DNAT --to-destination $remote:$remoteport
 iptables -t nat -A POSTROUTING -p tcp -d $remote --dport $remoteport -j SNAT --to-source $localIP
 iptables -t nat -A POSTROUTING -p udp -d $remote --dport $remoteport -j SNAT --to-source $localIP
 EOF
-            done
+        elif [ $local_is_range -eq 1 ] && [ $remote_is_range -eq 1 ]; then
+            # 端口段到端口段（一对一映射）
+            # 将冒号转换为连字符（iptables 端口范围语法）
+            local local_range=$(echo "$localport" | tr ':' '-')
+            local remote_range=$(echo "$remoteport" | tr ':' '-')
+            cat >> $lastConfigTmp <<EOF
+iptables -t nat -A PREROUTING -p tcp --dport $localport -j DNAT --to-destination $remote:$remote_range
+iptables -t nat -A PREROUTING -p udp --dport $localport -j DNAT --to-destination $remote:$remote_range
+iptables -t nat -A POSTROUTING -p tcp -d $remote -m multiport --dports $remoteport -j SNAT --to-source $localIP
+iptables -t nat -A POSTROUTING -p udp -d $remote -m multiport --dports $remoteport -j SNAT --to-source $localIP
+EOF
         else
-            # 其他情况：单端口到单端口，或端口段到端口段
+            # 单端口到单端口
             cat >> $lastConfigTmp <<EOF
 iptables -t nat -A PREROUTING -p tcp --dport $localport -j DNAT --to-destination $remote:$remoteport
 iptables -t nat -A PREROUTING -p udp --dport $localport -j DNAT --to-destination $remote:$remoteport
