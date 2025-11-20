@@ -111,16 +111,18 @@ apply_rules() {
     
     # 读取配置文件并应用规则
     while IFS= read -r line; do
-        # 跳过空行
+        # 跳过空行和注释
         [ -z "$line" ] && continue
+        [[ "$line" =~ ^#.*$ ]] && continue
         
         echo "处理规则: $line"
         
-        if [[ "$line" =~ ^([0-9]+)-([0-9]+)>([0-9.]+):([0-9]+)$ ]]; then
-            local start_port=${BASH_REMATCH[1]}
-            local end_port=${BASH_REMATCH[2]}
-            local target_ip=${BASH_REMATCH[3]}
-            local target_port=${BASH_REMATCH[4]}
+        # 解析规则格式: 起始端口-结束端口>目标IP:目标端口
+        if [[ "$line" =~ ^([0-9]+)-([0-9]+)\>([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+):([0-9]+)$ ]]; then
+            local start_port="${BASH_REMATCH[1]}"
+            local end_port="${BASH_REMATCH[2]}"
+            local target_ip="${BASH_REMATCH[3]}"
+            local target_port="${BASH_REMATCH[4]}"
             
             echo "  解析: 端口 ${start_port}-${end_port} → ${target_ip}:${target_port}"
             
@@ -136,19 +138,23 @@ apply_rules() {
             iptables -t nat -A POSTROUTING -p udp -d ${target_ip} --dport ${target_port} \
                 -j SNAT --to-source ${localIP}
             
-            echo -e "  ${green}已应用: ${start_port}-${end_port} → ${target_ip}:${target_port}${black}"
+            echo -e "  ${green}✓ 已应用: ${start_port}-${end_port} → ${target_ip}:${target_port}${black}"
         else
-            echo -e "  ${red}格式错误，跳过: $line${black}"
+            echo -e "  ${red}✗ 格式错误，跳过: $line${black}"
+            echo -e "  ${yellow}正确格式应为: 起始端口-结束端口>目标IP:目标端口${black}"
         fi
-    done < $conf
+    done < "$conf"
     
     echo -e "${green}所有规则已应用完成！${black}"
     
     # 保存iptables规则
     if command -v iptables-save &> /dev/null; then
         mkdir -p /etc/iptables 2>/dev/null
-        iptables-save > /etc/iptables/rules.v4 2>/dev/null && echo "规则已保存到 /etc/iptables/rules.v4" || \
-        (iptables-save > /etc/sysconfig/iptables 2>/dev/null && echo "规则已保存到 /etc/sysconfig/iptables")
+        if iptables-save > /etc/iptables/rules.v4 2>/dev/null; then
+            echo "规则已保存到 /etc/iptables/rules.v4"
+        elif iptables-save > /etc/sysconfig/iptables 2>/dev/null; then
+            echo "规则已保存到 /etc/sysconfig/iptables"
+        fi
     fi
 }
 
@@ -191,7 +197,7 @@ quick_setup() {
     setup_service
     
     # 启动服务
-    systemctl start dnat.service
+    systemctl start dnat.service 2>/dev/null
     
     echo ""
     echo -e "${green}==================== 设置完成 ====================${black}"
@@ -199,8 +205,8 @@ quick_setup() {
     echo "  20000-40000 → ${target_ip}:${port1}"
     echo "  40001-60000 → ${target_ip}:${port2}"
     echo -e "${green}服务状态:${black}"
-    systemctl is-enabled dnat.service | grep -q enabled && echo "  开机自启: 已启用" || echo "  开机自启: 未启用"
-    systemctl is-active dnat.service | grep -q active && echo "  当前状态: 运行中" || echo "  当前状态: 未运行"
+    systemctl is-enabled dnat.service 2>/dev/null | grep -q enabled && echo "  开机自启: 已启用" || echo "  开机自启: 未启用"
+    systemctl is-active dnat.service 2>/dev/null | grep -q active && echo "  当前状态: 运行中" || echo "  当前状态: 未运行"
     echo -e "${green}==================================================${black}"
 }
 
